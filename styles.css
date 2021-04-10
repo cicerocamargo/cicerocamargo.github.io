@@ -74,7 +74,7 @@ nav li a.selected {
 
 .social-links li {
     display: inline;
-    margin: 0 7px;
+    margin-right: 5px;
     line-height: 1.5em;
     text-decoration: none;
 }
@@ -170,6 +170,7 @@ a {
 
 footer {
     color: #8a8a8a;
+    padding-bottom: 20px;
 }
 
 .link-image {

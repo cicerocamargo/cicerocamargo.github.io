@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content"><channel><title>Cícero Camargo</title><description>iOS Developer</description><link>https://your-website-url.com</link><language>en</language><lastBuildDate>Mon, 17 May 2021 08:09:12 -0300</lastBuildDate><pubDate>Mon, 17 May 2021 08:09:12 -0300</pubDate><ttl>250</ttl><atom:link href="https://your-website-url.com/feed.rss" rel="self" type="application/rss+xml"/><item><guid isPermaLink="true">https://your-website-url.com/articles/combine-intro-1</guid><title>A Combine Introduction - Part 1</title><description>Part 1 of my Introduction to Combine.</description><link>https://your-website-url.com/articles/combine-intro-1</link><pubDate>Sat, 15 May 2021 10:47:00 -0300</pubDate><content:encoded><![CDATA[<h1>A Combine Introduction - Part 1</h1><p>Have you ever tried to learn reactive programming and got even more confused than before after reading some definitions of it? Yeah, I know. I've been there too and I promise won’t throw any definition at you here. What I want to do instead is using concepts that you already know and then show how to convert them into Combine code.</p><p>So let’s cut the bullshit and get started!</p><h2>Our case study</h2><p>For us to have a realistic starting point imagine the following: you need to implement a component for a banking application that loads and presents the user's account balance. Here are some more detailed specifications:</p><ul><li>It must refresh each time it appears on-screen;</li><li>It must provide a way for the user to refresh the balance manually;</li><li>Currency should be formatted to USD;</li><li>Once we have a value to show, we should always show the date when that value was acquired;</li><li>It should redact the value when the app is not active;</li></ul><p>The result looks like this:</p><img src="https://github.com/cicerocamargo/CombineIntro/raw/main/recording.gif"/><p>I went ahead and implemented it in the simplest possible way that I could unit-test. Our starting point will be <a href="https://github.com/cicerocamargo/CombineIntro/tree/b624810c6a6820b2894e5549458bcf95446c1ab2">this commit</a>.</p><p>It's a UIKit MVC component and all the behavior as well as the view updates take place into the <code>BalanceViewController</code>. <code>BalanceView</code> contains just some ugly view code and it exposes a couple of subviews for the ViewController to tweak as needed. I know, this is not ideal from the encapsulation point of view, but it will serve as a temporary way to remove this ugliness from the controller, bear with me.</p><p>We also have the <code>BalanceService</code>, which abstracts away the request to get the current balance, and <code>BalanceViewState</code>, which groups all the properties that compose the state of the component as well as some extensions with presentation logic.</p><p>Take some time to study the code. Consider starting from <code>BalanceViewControllerTests</code>, where I tried to cover everything at once: how the controller interacts with the service in reaction to certain events and how it updates the view with formatted data. It's pretty impressive how much code we need to write to get this simple component done, isn't it?</p><p>OK. Ready? Let's move on.</p><h2>It all comes down to asynchronous events</h2><p>Object-Oriented software is about objects sending messages (or <em>events</em>) to each other and updating their state correctly upon the reception of the events that they implement or are interested in.</p><p>Let's analyze the following excerpt from <code>BalanceViewController</code>:</p><pre><code>(...)
+<?xml version="1.0" encoding="UTF-8"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content"><channel><title>Cícero Camargo</title><description>iOS Developer</description><link>https://your-website-url.com</link><language>en</language><lastBuildDate>Fri, 21 May 2021 08:14:48 -0300</lastBuildDate><pubDate>Fri, 21 May 2021 08:14:48 -0300</pubDate><ttl>250</ttl><atom:link href="https://your-website-url.com/feed.rss" rel="self" type="application/rss+xml"/><item><guid isPermaLink="true">https://your-website-url.com/articles/combine-intro-1</guid><title>A Combine Introduction - Part 1</title><description>Part 1 of my Introduction to Combine.</description><link>https://your-website-url.com/articles/combine-intro-1</link><pubDate>Sat, 15 May 2021 10:47:00 -0300</pubDate><content:encoded><![CDATA[<h1>A Combine Introduction - Part 1</h1><p>Have you ever tried to learn reactive programming and got even more confused than before after reading some definitions of it? Yeah, I know. I've been there too and I promise won’t throw any definition at you here. What I want to do instead is using concepts that you already know and then show how to convert them into Combine code.</p><p>So let’s cut the bullshit and get started!</p><h2>Our case study</h2><p>For us to have a realistic starting point imagine the following: you need to implement a component for a banking application that loads and presents the user's account balance. Here are some more detailed specifications:</p><ul><li>It must refresh each time it appears on-screen;</li><li>It must provide a way for the user to refresh the balance manually;</li><li>Currency should be formatted to USD;</li><li>Once we have a value to show, we should always show the date when that value was acquired;</li><li>It should redact the value when the app is not active;</li></ul><p>The result looks like this:</p><img src="https://github.com/cicerocamargo/CombineIntro/raw/main/recording.gif"/><p>I went ahead and implemented it in the simplest possible way that I could unit-test. Our starting point will be <a href="https://github.com/cicerocamargo/CombineIntro/tree/b624810c6a6820b2894e5549458bcf95446c1ab2">this commit</a>.</p><p>It's a UIKit MVC component and all the behavior as well as the view updates take place into the <code>BalanceViewController</code>. <code>BalanceView</code> contains just some ugly view code and it exposes a couple of subviews for the ViewController to tweak as needed. I know, this is not ideal from the encapsulation point of view, but it will serve as a temporary way to remove this ugliness from the controller, bear with me.</p><p>We also have the <code>BalanceService</code>, which abstracts away the request to get the current balance, and <code>BalanceViewState</code>, which groups all the properties that compose the state of the component as well as some extensions with presentation logic.</p><p>Take some time to study the code. Consider starting from <code>BalanceViewControllerTests</code>, where I tried to cover everything at once: how the controller interacts with the service in reaction to certain events and how it updates the view with formatted data. It's pretty impressive how much code we need to write to get this simple component done, isn't it?</p><p>OK. Ready? Let's move on.</p><h2>It all comes down to asynchronous events</h2><p>Object-Oriented software is about objects sending messages (or <em>events</em>) to each other and updating their state correctly upon the reception of the events that they implement or are interested in.</p><p>Let's analyze the following excerpt from <code>BalanceViewController</code>:</p><pre><code>(...)
 
 override func viewDidLoad() {
     super.viewDidLoad()
@@ -151,4 +151,163 @@ class BalanceViewController: UIViewController {
     
     (...)
 }
-</code></pre><p>Neat, right? Tests still pass. Here is the <a href="https://github.com/cicerocamargo/CombineIntro/compare/20021065822fe5d4d996e78be42a6edd4d17ec63...b18a1aed2fb471aa1a55b7e9672faa63e543e922">whole change</a>. Moving on.</p><h2>Conclusion</h2><p>Wow! It was a lot for a single article! We learned about event-driven programming and reactive concepts like publishers, subscriptions, etc., and we also found out that we already knew a lot of these things, it's just a matter of adapting the way we write the code to connect the events.</p><p>In the next article, my plan is to refactor the component towards the MVVM pattern, and in the process we will see new Combine types as well as new ways of creating subscriptions.</p><p>I'm also pushing this series of articles into the README of the repo, so you can start watching the repo and follow me on <a href="https://twitter.com/cicerocamargo">Twitter</a> or <a href="https://www.linkedin.com/in/cicerocamargo/">LinkedIn</a> to be notified about updates.</p><p>If you have suggestions, corrections, etc., feel free to open a Pull Request or send me a message.</p><p>See you soon.</p>]]></content:encoded></item></channel></rss>
+</code></pre><p>Neat, right? Tests still pass. Here is the <a href="https://github.com/cicerocamargo/CombineIntro/compare/20021065822fe5d4d996e78be42a6edd4d17ec63...b18a1aed2fb471aa1a55b7e9672faa63e543e922">whole change</a>. Moving on.</p><h2>Conclusion</h2><p>Wow! It was a lot for a single article! We learned about event-driven programming and reactive concepts like publishers, subscriptions, etc., and we also found out that we already knew a lot of these things, it's just a matter of adapting the way we write the code to connect the events.</p><p>In the next article, my plan is to refactor the component towards the MVVM pattern, and in the process we will see new Combine types as well as new ways of creating subscriptions.</p><p>I'm also pushing this series of articles into the README of the repo, so you can start watching the repo and follow me on <a href="https://twitter.com/cicerocamargo">Twitter</a> or <a href="https://www.linkedin.com/in/cicerocamargo/">LinkedIn</a> to be notified about updates.</p><p>If you have suggestions, corrections, etc., feel free to open a Pull Request or send me a message.</p><p>See you soon.</p>]]></content:encoded></item><item><guid isPermaLink="true">https://your-website-url.com/articles/combine-intro-2</guid><title>An Introduction to Combine - Part 2</title><description>Let's refactor our tiny app towards MVVM and learn about CurrentValueSubject and the @Published property wrapper.</description><link>https://your-website-url.com/articles/combine-intro-2</link><pubDate>Sat, 15 May 2021 10:47:00 -0300</pubDate><content:encoded><![CDATA[<h1>An Introduction to Combine - Part 2</h1><p>Welcome back to the second part of this introduction to Combine. In <a href="https://cicerocamargo.github.io/articles/combine-intro-1/">part 1</a> we learned how to see our applications as a mesh of objects that produce and consume events from each other, and from that point we gave our first step to refactor our mini MVC app using Combine.</p><p>In this second part I want to we're going to continue the refactor moving our component towards the MVVM (Model-View-ViewModel) pattern, and by doing that we're gonna learn how we can use Combine to <strong>observe updates in stored values</strong>.</p><h2>Refactoring to MVVM</h2><p>Before we start changing the code, let's talk about the role of the <code>ViewModel</code>. Comparing our component to a living organism, I see the <code>ViewModel</code> as the <strong>brain</strong>, where the the <code>View/ViewController</code> is the body. The role of the brain is to tell the body how to behave and how it feels at the moment, while the body reacts to that state of the brain and also sends signals, as this being interacts with the environment, for the brain to process. Also, if the organism is too simple there's no need for a complex brain, a pretty dumb one is enough for the body to fill its role in the environment.</p><p>Translating this into developer words, the <code>View/ViewController</code> is the body and the <code>ViewModel</code> is the brain. If the component is too dumb, one without any complex/asynchronous behavior, the <code>ViewModel</code> <em>is</em> the state that feeds the view and can be modeled as a value type (<code>struct</code> or <code>enum</code>). Now, if the component contains behavior (which is the case for our Balance component) the <code>ViewModel</code> will encapsulate this behavior by (1) providing an <strong>observable</strong> state for the <code>View/ViewController</code> to render and (2) handling any events that the <code>View/ViewController</code> might send. The role of the view layer is just <strong>binding</strong> correctly to the ViewModel, so that its always sends the right events and renders the <code>ViewModel</code>'s current state.</p><p>So we'll start by defining a class that will own the state of our <code>BalanceViewController</code> and then we'll move all the behavior and state updates into this class.</p><pre><code>import Combine
+import Foundation
+import UIKit
+
+final class BalanceViewModel {
+    private(set) var state = BalanceViewState()
+    private let service: BalanceService
+    private var cancellables: Set&lt;AnyCancellable&gt; = []
+
+    init(service: BalanceService) {
+        self.service = service
+
+        NotificationCenter.default
+            .publisher(for: UIApplication.willResignActiveNotification)
+            .sink { [weak self] _ in
+                self?.state.isRedacted = true
+            }
+            .store(in: &amp;cancellables)
+
+        NotificationCenter.default
+            .publisher(for: UIApplication.didBecomeActiveNotification)
+            .sink { [weak self] _ in
+                self?.state.isRedacted = false
+            }
+            .store(in: &amp;cancellables)
+    }
+
+    func refreshBalance() {
+        state.didFail = false
+        state.isRefreshing = true
+        service.refreshBalance { [weak self] result in
+            self?.handleResult(result)
+        }
+    }
+
+    private func handleResult(_ result: Result&lt;BalanceResponse, Error&gt;) {
+        state.isRefreshing = false
+        do {
+            state.lastResponse = try result.get()
+        } catch {
+            state.didFail = true
+        }
+    }
+}
+</code></pre><p>You may have wrinkled your nose to that <code>import UIKit</code> at the top because I'm adding a framework dependency to my <code>ViewModel</code> and that will make it harder to reuse this component in that WatchOS app that some customers have been asking for... Yes, I could have done this is a number of ways but I don't want to overcomplicate things here and I really wanted to extract these subscriptions from <code>BalanceViewController</code>, so that in the future we can replace it with a SwfitUI view with minimal effort, so bear with me.</p><p>Let's return to our <code>BalanceViewController</code>, which is completely broken, at this point. After some adjustments, this is what I got:</p><pre><code>class BalanceViewController: UIViewController {
+    private let rootView = BalanceView()
+    private let viewModel: BalanceViewModel
+    private let formatDate: (Date) -&gt; String
+    private var cancellables: Set&lt;AnyCancellable&gt; = []
+    
+    init(
+        service: BalanceService,
+        formatDate: @escaping (Date) -&gt; String = BalanceViewState.relativeDateFormatter.string(from:)
+    ) {
+        self.viewModel = .init(service: service)
+        self.formatDate = formatDate
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    (...)    
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        
+        rootView.refreshButton.touchUpInsidePublisher
+            .sink(receiveValue: viewModel.refreshBalance)
+            .store(in: &amp;cancellables)
+    }
+    
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        viewModel.refreshBalance()
+    }
+    
+    private func updateView() {
+        rootView.refreshButton.isHidden = viewModel.state.isRefreshing
+        if viewModel.state.isRefreshing {
+            rootView.activityIndicator.startAnimating()
+        } else {
+            rootView.activityIndicator.stopAnimating()
+        }
+        rootView.valueLabel.text = viewModel.state.formattedBalance
+        rootView.valueLabel.alpha = viewModel.state.isRedacted
+            ? BalanceView.alphaForRedactedValueLabel
+            : 1
+        rootView.infoLabel.text = viewModel.state.infoText(formatDate: formatDate)
+        rootView.infoLabel.textColor = viewModel.state.infoColor
+        rootView.redactedOverlay.isHidden = !viewModel.state.isRedacted
+    }
+}
+
+</code></pre><p>Looks much shorter now, right? And pay attention to how we simplified that <code>sink</code> call on <code>viewDidLoad()</code>. As the <code>receiveValue</code> closure has a <code>Void</code> input argument and <code>func refreshBalance()</code> also receives no arguments, I can forward the event directly to the <code>ViewModel</code>, there's no need to go through <code>self</code> anymore. Just be careful when using this as it will keep a strong reference from the cancellable to the <code>viewModel</code>, which is fine as long as the <code>viewModel</code> doesn't have a strong reference back to the <code>ViewController</code>, which will ultimately own the cancellable.</p><p>Let's run our tests again and... oops! Almost all off them failed. That's because <code>updateView()</code> is not being called anymore when the state is updated by the <code>ViewModel</code>. How could the <code>ViewController</code> know about that?</p><p>Maybe the <code>ViewController</code> could set up a closure for the <code>ViewModel</code> to call back every time the state changes, or maybe we could have a delegate protocol between them, or maybe KVO... No, no, no. All of them would work, but we're here to learn Combine. Not just because it's the subject of the article, but because it's better for a numbebr of reasons: we don't need to have <code>weak</code> references, we can have multiple subscribers, we unlock a lot of useful operators, <code>ViewModel</code> doesn't need to inherit from <code>NSObject</code>...</p><p>So, what our <code>ViewController</code> needs is that the <code>ViewModel</code> provides a publisher that will send events back every time the state changes. So, based on what we learned in <a href="https://cicerocamargo.github.io/articles/combine-intro-1/">Part 1</a>, you may have thought about this:</p><pre><code>final class BalanceViewModel {
+    private let stateSubject = PassthroughSubject&lt;BalanceViewState, Never&gt;()
+    private(set) var state = BalanceViewState() {
+        didSet {
+            stateSubject.send(state)
+        }
+    }
+    var statePublisher: AnyPublisher&lt;BalanceViewState, Never&gt; {
+        stateSubject.eraseToAnyPublisher()
+    }
+    
+    (...)
+</code></pre><p>Ok, this will work for our use case as the state is updated right after the component appears. If this wasn't the case, the <code>ViewController</code> would have to make an additional call, along with the subscription, to render the initial state. This is not ideal, so let me introduce <code>CurrentValueSubject</code>.</p><h2>CurrentValueSubject</h2><p>This is a subject that stores a value and also publishes changes on it, so that subscribers get the current value right away when they subscribe and also any subsequent updates. Let's see how we could fix our current issue using a <code>CurrentValueSubject</code>.</p><pre><code>final class BalanceViewModel {
+    private let stateSubject: CurrentValueSubject&lt;BalanceViewState, Never&gt;
+    private(set) var state: BalanceViewState {
+        get { stateSubject.value }
+        set { stateSubject.send(newValue) }
+    }
+    var statePublisher: AnyPublisher&lt;BalanceViewState, Never&gt; {
+        stateSubject.eraseToAnyPublisher()
+    }
+    
+    (...)
+    
+    init(service: BalanceService) {
+        self.service = service
+        stateSubject = .init(BalanceViewState())
+        
+        (...)
+    }
+    
+    (...)
+}
+</code></pre><p>Since <code>stateSubject</code> already stores a <code>BalanceViewState</code> it has become our source of truth, and <code>state</code> has become just a proxy to get the current value from <code>stateSubject</code> and push changes to <code>stateSubject</code> through a <code>send</code> call. Just be careful that everytime we change any property under <code>BalanceViewState</code>, a new state is published to the subscribers. This is happenning in our code as we change the state properties in place, one by one, instead of making a copy of the state, changing all the properties we need, and then writing the new value back to <code>self.state</code> again. It's not a big deal for our simple example, just be aware of this.</p><p>Also, similarly to what we've done in our <code>CustomButton</code>, we don't want to expose the subject itself because only <code>BalanceViewModel</code> should be able to call <code>send</code> on it, so we're providing it to the external world as an <code>AnyPublisher</code>.</p><p>Now back to <code>BalanceViewController</code>, all we need to do is adding the following after <code>super.viewDidLoad()</code>:</p><pre><code>viewModel.statePublisher
+    .sink { [weak self] _ in self?.updateView() }
+    .store(in: &amp;cancellables)
+</code></pre><p>We can just ignore the input value for now because we are already accessing it directly in the viewModel inside <code>func updateView()</code>.</p><p>It's time to run our tests again. They all pass! Yay! You can see the full diff <a href="https://github.com/cicerocamargo/CombineIntro/compare/f94da3262867c551ba6c7665f82516ed617755c1...752a7f9d0c046e6f8337c2ca0396601ca8a430ce">here</a>.</p><h2>@Published</h2><p>Once you start using <code>CurrentValueSubject</code> you'll find yourself repeating the same pattern again and again: the subject is the source of truth, you have a var to access it in a more convenient way, and you also have to expose it to subscribes a read-only publisher. Maybe we could write a property-wrapper to encapsulate all this...</p><p>I have good news: it already exists. If you have played with SwiftUI you might also have used the @Published property-wrapper. Let's see how we can use it in our UIKit app.</p><p>All we have to do in <code>BalanceViewModel</code> is replacing those 3 members (<code>stateSubject</code>, <code>statePublisher</code> and that proxy <code>state</code> var) with:</p><pre><code>@Published private(set) var state = BalanceViewState()
+</code></pre><p>It always reads a bit funny to me because it's "published" (which sounds like it's <code>public</code>) but it's also "private" at the same time. Anyway, this is exactly what we need: a value that can only be written by it's owner (<code>BalanceViewModel</code>) but can be read and observed from the outside.</p><p>Now we have to adjust the <code>ViewController</code>. All we need to do is changing where we were accessing <code>viewModel.statePublisher</code> to <code>viewModel.$state</code> that we'll have access to the publisher that comes with this property wrapper.</p><p>We run our tests again and... they fail! WTF?!</p><p>Well, we are ignoring the value that comes from the publisher and reaching the ViewModel again to get the current state. The problem is that <code>@Published</code> publishes the new value on the <code>willSet</code> of the property it wraps, so at the time the subscribers receive the new value the source of truth hasn't been written yet. This works seamlessly in SwiftUI because the framework does all the magic and recalculates the View's body at the right moment, but in our case if we want to use <code>@Published</code> we can't ignore the value, so let's update our <code>BalanceViewController</code> and start using the state from the publisher instead of reaching the <code>viewModel</code> again on <code>updateView</code>:</p><pre><code>class BalanceViewController: UIViewController {
+    (...)
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+
+        viewModel.$state
+            .sink { [weak self] in self?.updateView(state: $0) }
+            .store(in: &amp;cancellables)
+        
+        (...)
+    }
+    
+    (...)
+    
+    private func updateView(state: BalanceViewState) {
+        rootView.refreshButton.isHidden = state.isRefreshing
+        if state.isRefreshing {
+            rootView.activityIndicator.startAnimating()
+        } else {
+            rootView.activityIndicator.stopAnimating()
+        }
+        rootView.valueLabel.text = state.formattedBalance
+        rootView.valueLabel.alpha = state.isRedacted
+            ? BalanceView.alphaForRedactedValueLabel
+            : 1
+        rootView.infoLabel.text = state.infoText(formatDate: formatDate)
+        rootView.infoLabel.textColor = state.infoColor
+        rootView.redactedOverlay.isHidden = !state.isRedacted
+    }
+}
+</code></pre><p>And our tests are back to green. <a href="https://github.com/cicerocamargo/CombineIntro/commit/cd9dbd1ea2660ad84d5a865c26259a3ab918e26e">Here</a>'s the full change.</p><h2>Conclusion</h2><p>Being able to observe changes in stored properties is a pre-requisite for applying the MVVM pattern and Combine helps a lot with this task, specially with the <code>@Published</code> property wrapper. But we have to be aware of its details, so don't be like me please <a href="https://developer.apple.com/documentation/combine/published">read the documentation</a>.</p><p>In part 3, we'll continue this refactor and learn new ways of creating subscriptions.</p><p>I'm also pushing this series of articles into the README of the repo, so you can start watching the repo and follow me on <a href="https://twitter.com/cicerocamargo">Twitter</a> or <a href="https://www.linkedin.com/in/cicerocamargo/">LinkedIn</a> to be notified about updates.</p><p>If you have suggestions, corrections, etc., feel free to open a Pull Request or send me a message.</p><p>See you soon.</p>]]></content:encoded></item></channel></rss>

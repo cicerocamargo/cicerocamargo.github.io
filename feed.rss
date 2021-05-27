@@ -1,157 +1,120 @@
-<?xml version="1.0" encoding="UTF-8"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content"><channel><title>Cícero Camargo</title><description>iOS Developer</description><link>https://your-website-url.com</link><language>en</language><lastBuildDate>Fri, 21 May 2021 08:26:34 -0300</lastBuildDate><pubDate>Fri, 21 May 2021 08:26:34 -0300</pubDate><ttl>250</ttl><atom:link href="https://your-website-url.com/feed.rss" rel="self" type="application/rss+xml"/><item><guid isPermaLink="true">https://your-website-url.com/articles/combine-intro-1</guid><title>An Introduction to Combine - Part 1</title><description>Let's learn how to see our apps as event publishers and subscribers, and also give our first steps with Apple's Combine framework.</description><link>https://your-website-url.com/articles/combine-intro-1</link><pubDate>Sat, 15 May 2021 10:47:00 -0300</pubDate><content:encoded><![CDATA[<h1>An Introduction to Combine - Part 1</h1><p>Have you ever tried to learn reactive programming and got even more confused than before after reading some definitions of it? Yeah, I know. I've been there too and I promise won’t throw any definition at you here. What I want to do instead is using concepts that you already know and then show how to convert them into Combine code.</p><p>So let’s cut the bullshit and get started!</p><h2>Our case study</h2><p>For us to have a realistic starting point imagine the following: you need to implement a component for a banking application that loads and presents the user's account balance. Here are some more detailed specifications:</p><ul><li>It must refresh each time it appears on-screen;</li><li>It must provide a way for the user to refresh the balance manually;</li><li>Currency should be formatted to USD;</li><li>Once we have a value to show, we should always show the date when that value was acquired;</li><li>It should redact the value when the app is not active;</li></ul><p>The result looks like this:</p><img src="https://github.com/cicerocamargo/CombineIntro/raw/main/recording.gif"/><p>I went ahead and implemented it in the simplest possible way that I could unit-test. Our starting point will be <a href="https://github.com/cicerocamargo/CombineIntro/tree/b624810c6a6820b2894e5549458bcf95446c1ab2">this commit</a>.</p><p>It's a UIKit MVC component and all the behavior as well as the view updates take place into the <code>BalanceViewController</code>. <code>BalanceView</code> contains just some ugly view code and it exposes a couple of subviews for the ViewController to tweak as needed. I know, this is not ideal from the encapsulation point of view, but it will serve as a temporary way to remove this ugliness from the controller, bear with me.</p><p>We also have the <code>BalanceService</code>, which abstracts away the request to get the current balance, and <code>BalanceViewState</code>, which groups all the properties that compose the state of the component as well as some extensions with presentation logic.</p><p>Take some time to study the code. Consider starting from <code>BalanceViewControllerTests</code>, where I tried to cover everything at once: how the controller interacts with the service in reaction to certain events and how it updates the view with formatted data. It's pretty impressive how much code we need to write to get this simple component done, isn't it?</p><p>OK. Ready? Let's move on.</p><h2>It all comes down to asynchronous events</h2><p>Object-Oriented software is about objects sending messages (or <em>events</em>) to each other and updating their state correctly upon the reception of the events that they implement or are interested in.</p><p>Let's analyze the following excerpt from <code>BalanceViewController</code>:</p><pre><code>(...)
+<?xml version="1.0" encoding="UTF-8"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content"><channel><title>Cícero Camargo</title><description>iOS Developer</description><link>https://your-website-url.com</link><language>en</language><lastBuildDate>Thu, 27 May 2021 07:33:05 -0300</lastBuildDate><pubDate>Thu, 27 May 2021 07:33:05 -0300</pubDate><ttl>250</ttl><atom:link href="https://your-website-url.com/feed.rss" rel="self" type="application/rss+xml"/><item><guid isPermaLink="true">https://your-website-url.com/articles/combine-intro-3</guid><title>An Introduction to Combine - Part 3</title><description>Let's learn new subscription mechanisms in Combine with `assign(to:on:)` and `subscribe()`.</description><link>https://your-website-url.com/articles/combine-intro-3</link><pubDate>Thu, 27 May 2021 07:29:00 -0300</pubDate><content:encoded><![CDATA[<h1>An Introduction to Combine - Part 3</h1><p>And here we are for the third part of our introduction to Combine. If you lost the first two parts I highly recommend that you read them before because we've been learning the concepts and types from Combine by refactoring the same application step-by-step, so here are <a href="https://cicerocamargo.github.io/articles/combine-intro-1/">part 1</a> and <a href="https://cicerocamargo.github.io/articles/combine-intro-2/">part 2</a>.</p><p>In this article we're going to update our component to make use of 2 other subscription mechanisms: <strong>Subscribe</strong> and <strong>Assign</strong>.</p><h2>Subscribe</h2><p>One thing that I don't like in our code at the moment is that the <code>ViewController</code> is not exactly sending <em>events</em> do the <code>ViewModel</code>, but giving it <em>commands</em> instead. In other words, when the button is tapped <code>ViewController</code> doesn't say <em>"hey ViewModel, the refresh button was tapped, you may want to do something about it now..."</em>. No, it tells the ViewModel exatcly what to do: <em>"Refresh the balance!"</em>. The same applies to <code>viewDidAppear</code>.</p><p>This difference is subtle, but it matters and we're gonna fix this now. The first thing we're going to do is creating an <code>enum</code> to contain all events that flow from <code>BalanceViewController</code> to <code>BalanceViewModel</code>:</p><pre><code>enum BalanceViewEvent {
+    case viewDidAppear
+    case refreshButtonWasTapped
+}
+</code></pre><p>The next step is creating a subject in <code>BalanceViewModel</code> that will receive all the external events, and make a private subscription to it using <code>sink</code>:</p><pre><code>final class BalanceViewModel {
+    let eventSubject = PassthroughSubject&lt;BalanceViewEvent, Never&gt;()
+    (...)
+    
+    init(service: BalanceService) {
+        (...)
+        
+        eventSubject
+            .sink { [weak self] in self?.handleEvent($0) }
+            .store(in: &amp;cancellables)
+    }
 
-override func viewDidLoad() {
+    private func handleEvent(_ event: BalanceViewEvent) {
+        switch event {
+        case .refreshButtonWasTapped, .viewDidAppear:
+            refreshBalance()
+        }
+    }
+
+    private func refreshBalance() {
+        (...)
+    }
+
+    (...)
+}
+</code></pre><p>With this change we could make <code>refreshBalance()</code> private because, again, we don't want anybody telling our <em>ViewModel</em> what to do. The only thing an external caller can do with our <code>ViewModel</code> now is sendind it a <code>BalanceViewEvent</code> through the <code>eventSubject</code> and reading or subscribing to the <code>ViewModel</code>'s state.<br><br>Now we need to update the <code>ViewControler</code>. In <code>viewDidAppear</code> we just change <code>viewModel.refreshBalance()</code> for <code>viewModel.eventSubject.send(.viewDidAppear)</code>. In <code>viewDidLoad</code> is where we're gonna do it differently: we'll replace that <code>sink</code> on <code>rootView.refreshButton.touchUpInsidePublisher</code> with the following:</p><pre><code>rootView.refreshButton.touchUpInsidePublisher
+    .map { _ in BalanceViewEvent.refreshButtonWasTapped }
+    .subscribe(viewModel.eventSubject)
+    .store(in: &amp;cancellables)
+</code></pre><p>In the listing above we first append a <code>map</code> operator so that every time the button sends us that <code>Void</code> touch event we transform it into a proper <code>BalanceViewEvent</code>, which is the type of event that <code>eventSubject</code> accepts. Then we call <code>subscribe(viewModel.eventSubject)</code> on the resulting publisher, and retain the cancellable (as we were doing before).</p><p>From now on, every button tap will be transformed into a <code>BalanceViewEvent.refreshButtonWasTapped</code> and this event flow directly into <code>eventSubject</code>, and our <code>ViewModel</code> will, of course, be listening to all the events that pass through <code>eventSubject</code>.</p><p>Time to run our tests again. They pass. Here's the <a href="https://github.com/cicerocamargo/CombineIntro/commit/16572300c2df3de5d556492f1bf87bb06c5c6bd3">commit</a> with the change.</p><h3>Is replacing functions with subjects worth it?</h3><p>Before we move on, I wanted to analyze what we did on the <code>ViewModel</code>. Besides the mental shift from commands to events, we replaced function calls (we had only one in our simple example, but we usually have more than that) with a single subject, where the <code>ViewModel</code> can receive all the events it knows how to handle. This change looks a bit overkill for our tiny app, but they bring interesting capabilities to our code.</p><p>First, now that our ViewModel has a single point for receiveing events and a single var to store and publish the current state, we're very close to having a generic definition that we could use for <em>any</em> <code>ViewModel</code>, and this could even be used to decouple the <code>ViewController</code> from the <code>ViewModel</code> as long as they work with the same type for the events and for the state. But that's subject for another article.</p><p>Second, the fact that we're receiving events through a subject allows the viewModel to apply operators to different events. Imagine that we should only refresh the balance on the first time the view appears. We could do this without any additional var to control the number of times the "view did appear", the only thing we need to do is use the <code>first(where:)</code> operator:</p><pre><code>eventSubject
+    .first(where: { $0 == .viewDidAppear })
+    .sink { [weak self] _ in self?.refreshBalance() }
+    .store(in: &amp;cancellables)
+</code></pre><p>You can argue that I could also change the <code>viewDidAppear</code> event to a <code>viewDidLoad</code> event, and you're right, but if you switch to SwiftUI, for instance, you only have the <code>onAppear</code> event and it can be called multiple times, so if you have a requirement like this (refreshing automatically <em>only in the first time</em> the view appears) with a SwiftUI View you'll end up having to do something like we did above.</p><p>Another example: imagine that our <em>BalanceViewController</em> is a child of a larger <em>ViewController</em> that will show a lot of other things like last transactions the user made; as the user is new to the app, this parent <code>ViewController</code> is showing a text overlay explaining the balance widget and inviting the user to tap into the refresh balance button. When the user taps on it, in addition to refreshing the balance, the overlay should be dismissed. Well, anyone that knows our ViewModel can use <code>eventSubject</code> to send events to it, right? But they can also subscribe to this subject and also be notified when the ViewModel <em>receives</em> events from any source. This way our outer <code>ViewController</code> can know when the refresh button was tapped without the need for any additional <code>NSNotification</code>, callback or anything.</p><p>So, again, I'm not doing these changes just to push it with Combine. I really think modeling the inteface of my ViewModel in this way has several benefits.</p><h2>Assign</h2><p>The last subscription mechanism that I want to show today is the <code>.assign(to:on:)</code> function.</p><p>So far, we're binding the state updates to the view updates with the following piece of code in our <code>BalanceViewController</code>:</p><pre><code>override func viewDidLoad() {
     super.viewDidLoad()
 
-    rootView.refreshButton.addTarget(
-        self,
-        action: #selector(refreshBalance),
-        for: .touchUpInside
-    )
+    viewModel.$state
+        .sink { [weak self] in self?.updateView(state: $0) }
+        .store(in: &amp;cancellables)
+    
+    (...)
+}
 
-    notificationCenterTokens.append(
-        NotificationCenter.default.addObserver(
-            forName: UIApplication.willResignActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self]_ in
-            self?.state.isRedacted = true
+private func updateView(state: BalanceViewState) {
+    rootView.refreshButton.isHidden = state.isRefreshing
+    if state.isRefreshing {
+        rootView.activityIndicator.startAnimating()
+    } else {
+        rootView.activityIndicator.stopAnimating()
+    }
+    rootView.valueLabel.text = state.formattedBalance
+    rootView.valueLabel.alpha = state.isRedacted
+        ? BalanceView.alphaForRedactedValueLabel
+        : 1
+    rootView.infoLabel.text = state.infoText(formatDate: formatDate)
+    rootView.infoLabel.textColor = state.infoColor
+    rootView.redactedOverlay.isHidden = !state.isRedacted
+}
+
+</code></pre><p>By doing that we always update everything regardless of what changed from the past value of <code>viewModel.state</code>. To give you and example, if only <code>state.isRefreshing</code> changed the only views that should really be updated are <code>rootView.refreshButton</code> and <code>rootView.activityIndicator</code>, but in our case we're also changing texts, alphas, colors, etc., anyway.</p><p>So let's extract the updates to <code>rootView.refreshButton</code> and <code>rootView.activityIndicator</code> from this generic flow to more specific subscriptions. I'll start with <code>rootView.refreshButton</code> by removing the first line in the <code>updateView(state:)</code> function and addding the following to <code>viewDidLoad()</code>:</p><pre><code>let isRefreshingPublisher = viewModel.$state
+    .map(\.isRefreshing)
+    .removeDuplicates()
+
+isRefreshingPublisher
+    .assign(to: \.isHidden, on: rootView.refreshButton)
+    .store(in: &amp;cancellables)
+</code></pre><p>On the first three lines I take the <code>$state</code> publisher from the <code>viewModel</code> and use the <code>map()</code> operator with a <em>key path</em> to derive another publisher that extracts just the <code>Bool</code> value of <code>isRefreshing</code> from the whole <code>BalanceViewState</code> struct. If you don't understand what key paths are is I suggest that you read <a href="https://www.swiftbysundell.com/articles/the-power-of-key-paths-in-swift/">this article</a> from John Sundell.</p><p>Continuing, if I stop here and create a subscription to <code>viewModel.$state.map(\.isRefreshing)</code> I'll still be receiving repeated values. For instance, if the current value of the state has <code>isRefreshing</code> equal to <code>false</code> and the user answers a phone call, this will make the app inactive and <code>state.isRedacted</code> will be set to <code>true</code>. This change, which has nothing to do with <code>isRefreshing</code>, will generate another value for the whole <code>state</code> struct and <code>viewModel.$state.map(\.isRefreshing)</code> will ping me back with another <code>false</code> value, which is the value for <code>isRefreshing</code> in this new <code>state</code>. To prevent the reception of duplicated values, we can append the <code>.removeDuplicates()</code> operator. This operator will wrap the publisher resulting from the <code>map</code> call and only propagate values to the subscribers when they really changed.</p><p>Let's stop and take a look at the type of the <code>isRefreshingPublisher</code>:</p><p><code>Publishers.RemoveDuplicates&lt;Publishers.MapKeyPath&lt;Published&lt;BalanceViewState&gt;.Publisher, Bool&gt;&gt;</code></p><p>This is a pure application of the <a href="https://refactoring.guru/design-patterns/decorator">decorator pattern</a> in a heavily generic API, but it reads so complicated (and here we only applied 2 operators) that this is why we always prefer erasing to <code>AnyPublisher</code> when we need to declare the type of the publisher explicitly. The really important part of this type is that <code>Bool</code> at the end. We derived this publisher from a key path of a <code>Bool</code> property and that's the type of value that we'll get back when we subscribe to this publisher.</p><p>Talking about subscription, let's analyze that <code>assign(to:on:)</code> call, which effectively creates the subscription. The first parameter is a writable key path and the second parameter is the class that contains this key path. The type of the variable pointed by this key path must match the type of the publisher's value (that <code>Bool</code> we emphasized before). Just like <code>sink</code>, <code>assign</code> returns a <code>AnyCancellable</code> that must be stored while we want to keep the subscription alive.</p><p>The effect of this subscription is that every time <code>isRefreshingPublisher</code> publishes a new value it's instanteneously <em>assigned</em> to <code>isHidden</code> on <code>rootView.refreshButton</code>, which is exactly what we want.</p><p>A second implication is that the subscription creates a strong refefrence to the object passed as the second parameter, which is fine as <code>rootView.refreshButton</code> doesn't hold any strong reference back to our ViewController, the owner of the cancellable. We could also write the same subscription targeting the <code>rootView</code> instead:</p><pre><code>isRefreshingPublisher
+    .assign(to: \.refreshButton.isHidden, on: rootView)
+    .store(in: &amp;cancellables)
+</code></pre><p>This would also work fine. However, we would be creating a retain cycle with the following code:</p><pre><code>isRefreshingPublisher
+    .assign(to: \.rootView.refreshButton.isHidden, on: self)
+    .store(in: &amp;cancellables)
+</code></pre><p>Whenever you need to assign to key paths on <code>self</code> prefer using <code>sink { [weak self] value in }</code> instead or call <code>.assign(to: (...), onWeak: self)</code> using the following extension:</p><pre><code>extension Publisher where Failure == Never {
+    func assign&lt;Root: AnyObject&gt;(
+        to keyPath: ReferenceWritableKeyPath&lt;Root, Output&gt;,
+        onWeak object: Root
+    ) -&gt; AnyCancellable {
+        sink { [weak object] value in
+            object?[keyPath: keyPath] = value
         }
-    )
-
-    notificationCenterTokens.append(
-        NotificationCenter.default.addObserver(
-            forName: UIApplication.didBecomeActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self]_ in
-            self?.state.isRedacted = false
+    }
+}
+</code></pre><p>Moving on, this is how our <code>updateView(state:)</code> function looks like at the moment:</p><pre><code>private func updateView(state: BalanceViewState) {
+    if state.isRefreshing {
+        rootView.activityIndicator.startAnimating()
+    } else {
+        rootView.activityIndicator.stopAnimating()
+    }
+    rootView.valueLabel.text = state.formattedBalance
+    rootView.valueLabel.alpha = state.isRedacted
+        ? BalanceView.alphaForRedactedValueLabel
+        : 1
+    rootView.infoLabel.text = state.infoText(formatDate: formatDate)
+    rootView.infoLabel.textColor = state.infoColor
+    rootView.redactedOverlay.isHidden = !state.isRedacted
+}
+</code></pre><p>As we mentioned before, <code>state.isRefreshing</code> also controls the animation of the <code>rootView.activityIndicator</code>, so let's replace this if-else on <code>updateView(state:)</code> with another subscription to <code>isRefreshingPublisher</code> in <code>viewDidLoad()</code>:</p><pre><code>isRefreshingPublisher
+    .assign(to: \.isAnimating, on: rootView.activityIndicator)
+    .store(in: &amp;cancellables)
+</code></pre><p>But the compiler yells at us with an error that reads very complicated because of the deeply nested generics from <code>isRefreshingPublisher</code>:</p><pre><code>Key path value type 'ReferenceWritableKeyPath&lt;UIActivityIndicatorView, Publishers.RemoveDuplicates&lt;Publishers.MapKeyPath&lt;Published&lt;BalanceViewState&gt;.Publisher, Bool&gt;&gt;.Output&gt;' (aka 'ReferenceWritableKeyPath&lt;UIActivityIndicatorView, Bool&gt;') cannot be converted to contextual type 'KeyPath&lt;UIActivityIndicatorView, Publishers.RemoveDuplicates&lt;Publishers.MapKeyPath&lt;Published&lt;BalanceViewState&gt;.Publisher, Bool&gt;&gt;.Output&gt;' (aka 'KeyPath&lt;UIActivityIndicatorView, Bool&gt;')
+</code></pre><p>Don't be intimidated. Those "aka"s actually help a lot. The problem is that <code>isAnimating</code> is a readonly property on <code>UIActivityIndicatorView</code> and we obviously can't have a writable keypath from a readonly property. So we either need to go back to using a <code>sink</code> or find another way to use <code>assign</code>. I'll go with the second option, by creating the following extension:</p><pre><code>extension UIActivityIndicatorView {
+    var writableIsAnimating: Bool {
+        get { isAnimating }
+        set {
+            if newValue {
+                startAnimating()
+            } else {
+                stopAnimating()
+            }
         }
-    )
-}
-
-override func viewDidAppear(_ animated: Bool) {
-    super.viewDidAppear(animated)
-    refreshBalance()
-}
-
-@objc private func refreshBalance() {
-    state.didFail = false
-    state.isRefreshing = true
-    service.refreshBalance { [weak self] result in
-        self?.handleResult(result)
     }
 }
-
-(...)
-</code></pre><p>First of all, any <code>UIViewController</code> subclass will automatically be <em>subscribed</em> to a ton of <em>events</em> from the framework whether it wants or not. These subclasses can append behavior to certain events just by overriding specific methods. In our case, when the <code>viewDidLoad</code> event occurs <code>BalanceViewController</code> subscribes itself to events from other <em>publishers</em>: <code>rootView.refreshButton</code> and <code>NotificationCenter.default</code>.</p><p>In case it wanted to <em>cancel</em> these <em>subscriptions</em>, all it had to do is:</p><pre><code>rootView.refreshButton.removeTarget(
-    self,
-    action: #selector(refreshBalance),
-    for: .touchUpInside
-)
-notificationCenterTokens.forEach { token in
-    NotificationCenter.default.removeObserver(token)
-}
-</code></pre><p><code>BalanceViewController</code> also reacts to the <code>viewDidAppear</code> event by updating its state in preparation to refresh the balance, and sends an event (by a direct method call) to the <code>service</code> to fire a new request, passing a closure that should be invoked in reaction to the response being received.</p><p>I highlighted terms like <em>event</em>, <em>publisher</em>, <em>subscribe</em> and <em>cancel subscription</em> on purpose, firstly because they are frequent terms in Combine's dialect, but I also wanted to show you that you already understand event-driven programming and use it everyday. We just saw 3 manifestations of these concepts that are extensively used in UIKit: framework class/method overrides, the target-action pattern and closures (a.k.a. callbacks or blocks).</p><p>The same applies to most of the <em>delegates</em> that you certainly have used, like when you have a <code>UITableView</code> and you set a custom class of yours as the <code>UITableViewDelegate</code>. Your class will then be <em>reactive</em> to events, like the selection of a row at a given index, that happen in that table view.</p><p><a href="https://developer.apple.com/documentation/swift/cocoa_design_patterns/using_key-value_observing_in_swift">KVO</a> is another good example: you connect some code as a reaction to value changes of a property in some object. By the way, KVO calls can be converted into combine code directly, check <a href="https://developer.apple.com/documentation/combine/performing-key-value-observing-with-combine">here</a> fore more details.</p><p>And the list goes on. But, as you see, nothing is really new. Combine and other reactive frameworks just propose another way to model this event publisher-subscriber relationship.</p><p>So why having yet another way to do the same stuff?</p><p>Because reactive frameworks takes event handling to another level. The way Combine (and other frameworks like RxSwift or ReactiveCocoa) implements these mechanisms unlocks a lot of other useful features, as we're gonna see later.</p><p>For now let's just start “combinifying” the examples above (sorry for the long intro).</p><h2>The publisher side</h2><p>We'll start with the <code>refreshButton</code> in <code>BalanceView</code>. I’ll adapt the target-action to a Combine publisher that propagates the <code>.touchUpInside</code> events by creating a subclass of UIButton, like this:</p><pre><code>class CustomButton: UIButton {
-    private lazy var touchUpInsideSubject: PassthroughSubject&lt;Void, Never&gt; = {
-        let subject = PassthroughSubject&lt;Void, Never&gt;()
-        addTarget(self, action: #selector(handleTap), for: .touchUpInside)
-        return subject
-    }()
-
-    @objc private func handleTap(sender: UIButton, event: UIEvent) {
-        touchUpInsideSubject.send()
-    }
-
-    var touchUpInsidePublisher: AnyPublisher&lt;Void, Never&gt; {
-        touchUpInsideSubject.eraseToAnyPublisher()
-    }
-}
-</code></pre><p>We could do this without subclassing, which would be better, but its a bit more complex and the code above is perfect to explain some new Combine types that appeared on the listing.</p><h3>AnyPublisher</h3><p>The part that is visible to the outside is <code>touchUpInsidePublisher</code>, whose type is <code>AnyPublisher&lt;Void, Never&gt;</code>. This var exposes the upstream publisher (<code>touchUpInsideSubject </code>) in a read-only way by wrapping it in a type-erased Publisher. I won’t explain <em>type-erasure</em> here, but <a href="https://www.bignerdranch.com/blog/breaking-down-type-erasure-in-swift/">here</a> is an excellent article on the topic. If you are not familiar with type erasure you can also read it later and just accept that it’s a necessary evil for the time being.</p><p>Looking at the generic types (those types inside the angle brackets), the first one means that this publisher sends <code>Void</code> events (we could send the <code>UIEvent</code> instead but it's rarely useful, so let's stick with <code>Void</code>). The second one is the failure type, so <code>Never</code> is a Foundation type that can't be instantiated, meaning that this publisher can't fail, what makes sense since the UIButton will never break and stop sending touches.</p><h3>PassthroughSubject</h3><p>The <code>touchUpInsideSubject</code> is the real meat here. <code>Subject</code>s are special types of publishers, that allow you to programatically send events. <code>PassthroughSubject</code>, as it name suggests, doesn’t store any event/value that you send. Events just "pass through" the subject and reach any subscribers that it might have <strong>at that moment</strong>. This is important: if you subscribe to this subject (or to any publisher built on top of it, like its type-erased version <code>touchUpInsidePublisher</code>) after a given event happened you’ll never receive it again. Save that information.</p><p>Less importantly, <code>touchUpInsideSubject</code> is intentionally structured as a lazy var, so that when it’s first needed, the button also adds itself as target to call <code>send</code> on the subject when a <code>UIControl.Event.touchUpInside</code> occurs.</p><h2>The subscriber side</h2><p>Now let's see how we can update <code>BalanceViewController</code> to use our new button subclass and subscribe to <code>touchUpInsidePublisher</code>.</p><pre><code>import Combine
-(...)
-
-class BalanceViewController: UIViewController {
-    private var buttonCancellable: AnyCancellable?
-    (...)
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-
-        buttonCancellable = rootView.refreshButton.touchUpInsidePublisher
-            .sink(
-                receiveValue: { [weak self] _ in
-                    self?.refreshBalance()
-                }
-            )
-            
-        (...)
-    }
-    
-    (...)
-    
-    private func refreshBalance() { (...) }
-}
-</code></pre><p>Setting up a tap handler is a lot simpler now and we also don't need <code>@objc</code> functions anymore. It can get even simpler if we use the trailing closure syntax in the <code>sink</code> call:</p><pre><code>buttonCancellable = rootView.refreshButton.touchUpInsidePublisher
-    .sink { [weak self] _ in
-        self?.refreshBalance()
-    }
-</code></pre><p>We run the tests and they still pass. Nice!</p><p>But while we improved the code slightly we also had to add the <code>buttonCancellable</code> var, so let me explain all these new stuff before we move on.</p><h3>Sink</h3><p>The simplest way of creating a subscription to a publisher is to call <code>sink</code> passing a <code>receiveValue</code> closure that will be called on each new event. The input parameter is that <code>Void</code> value that we sent from the subject inside <code>CustomButton</code>. It doesn't contain any information, so we can just ignore it.</p><p>If we were interested in knowing when this publisher stops sending events, either because it completed successfuly or because it failed (which can't happen because the failure type is <code>Never</code>), we would also have to pass a <code>receiveCompletion</code> closure. As this is not the case let's not bother with this now.</p><h3>AnyCancellable</h3><p>So, from now on everytime this publisher sends an event (i.e. the button is tapped) <code>receiveValue</code> closure will be called. Well, not so fast. A crucial part is to retain the return value of <code>sink</code>, which is an instance of <code>AnyCancellable</code> (hello again <em>type erasure</em>). The cancellable object is what will ultimately keep this subscription alive, until you explicitly call <code>cancel</code> on it or the object is deallocated. In our example only <code>BalanceViewController</code> has a strong reference to <code>buttonCancellable</code>, so both will die together and the subscription will be cancelled at a proper time.</p><p>Just be careful with retain cycles because everything that you reference strongly in the <code>sink</code> closures will be indirectly referenced by the cancellable too.</p><p>Here's the full <a href="https://github.com/cicerocamargo/CombineIntro/compare/b624810c6a6820b2894e5549458bcf95446c1ab2...20021065822fe5d4d996e78be42a6edd4d17ec63">diff</a> from our starting point.</p><h2>What about NotificationCenter?</h2><p><code>NotificationCenter</code> already provides extensions that allow for creating publishers for a given <code>Notification.Name</code>, so <code>BalanceViewController</code> can be updated like this:</p><pre><code>class BalanceViewController: UIViewController {
-    (...)
-    private var appWillResignActiveCancellable: AnyCancellable?
-    private var appDidBecomeActiveCancellable: AnyCancellable?
-
-    (...)
-
-    override func viewDidLoad() {
-        (...)
-
-        appWillResignActiveCancellable = NotificationCenter.default
-            .publisher(for: UIApplication.willResignActiveNotification)
-            .sink { [weak self] _ in
-                self?.state.isRedacted = true
-            }
-
-        appDidBecomeActiveCancellable = NotificationCenter.default
-            .publisher(for: UIApplication.didBecomeActiveNotification)
-            .sink { [weak self] _ in
-                self?.state.isRedacted = false
-            }
-    }
-    
-    (...)
-}
-</code></pre><p>Now the input parameter of the <code>receiveValue</code> closures will be the <code>Notification</code> objects, which I'm not interested in as well. But the point here is that the type of this input value is always bound to the generic type from the publisher.</p><p>Some things are not visible in the code above: I got rid of the <code>notificationCenterTokens</code> var and could also delete the custom <code>deinit</code> because the cancellables will already take care of the unsubscribe. On the other hand, I had to add 2 new <code>AnyCancellable</code> vars to retain the subscriptions. This is starting to smell...</p><p>As all the 3 cancellables have the same lifetime (they should live while their instance of <code>BalanceViewController</code> exists), we can put all of them into a signle <code>Set</code> and use a convenient <code>store(in:)</code> function to throw them in there immediately after their creation. Let's see how this looks:</p><pre><code>class BalanceViewController: UIViewController {
-    private var cancellables: Set&lt;AnyCancellable&gt; = []
-
-    (...)
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-
-        rootView.refreshButton.touchUpInsidePublisher
-            .sink { [weak self] _ in
-                self?.refreshBalance()
-            }
-            .store(in: &amp;cancellables)
-
-        NotificationCenter.default
-            .publisher(for: UIApplication.willResignActiveNotification)
-            .sink { [weak self] _ in
-                self?.state.isRedacted = true
-            }
-            .store(in: &amp;cancellables)
-
-        NotificationCenter.default
-            .publisher(for: UIApplication.didBecomeActiveNotification)
-            .sink { [weak self] _ in
-                self?.state.isRedacted = false
-            }
-            .store(in: &amp;cancellables)
-    }
-    
-    (...)
-}
-</code></pre><p>Neat, right? Tests still pass. Here is the <a href="https://github.com/cicerocamargo/CombineIntro/compare/20021065822fe5d4d996e78be42a6edd4d17ec63...b18a1aed2fb471aa1a55b7e9672faa63e543e922">whole change</a>. Moving on.</p><h2>Conclusion</h2><p>Wow! It was a lot for a single article! We learned about event-driven programming and reactive concepts like publishers, subscriptions, etc., and we also found out that we already knew a lot of these things, it's just a matter of adapting the way we write the code to connect the events.</p><p>In <a href="https://cicerocamargo.github.io/articles/combine-intro-2/">part 2</a>, we're gonna refactor our component towards the MVVM pattern, and in the process we will learn about new Combine types.</p><p>I'm also pushing this series of articles into the README of the repo, so you can start watching the repo and follow me on <a href="https://twitter.com/cicerocamargo">Twitter</a> or <a href="https://www.linkedin.com/in/cicerocamargo/">LinkedIn</a> to be notified about updates.</p><p>If you have suggestions, corrections, etc., feel free to open a Pull Request or send me a message.</p><p>See you soon.</p>]]></content:encoded></item><item><guid isPermaLink="true">https://your-website-url.com/articles/combine-intro-2</guid><title>An Introduction to Combine - Part 2</title><description>Let's refactor our tiny app towards MVVM and learn about CurrentValueSubject and the @Published property wrapper.</description><link>https://your-website-url.com/articles/combine-intro-2</link><pubDate>Sat, 15 May 2021 10:47:00 -0300</pubDate><content:encoded><![CDATA[<h1>An Introduction to Combine - Part 2</h1><p>Welcome back to the second part of this introduction to Combine. In <a href="https://cicerocamargo.github.io/articles/combine-intro-1/">part 1</a> we learned how to see our applications as a mesh of objects that produce and consume events from each other, and from that point we gave our first step to refactor our mini MVC app using Combine.</p><p>In this second part I want to we're going to continue the refactor moving our component towards the MVVM (Model-View-ViewModel) pattern, and by doing that we're gonna learn how we can use Combine to <strong>observe updates in stored values</strong>.</p><h2>Refactoring to MVVM</h2><p>Before we start changing the code, let's talk about the role of the <code>ViewModel</code>. Comparing our component to a living organism, I see the <code>ViewModel</code> as the <strong>brain</strong>, where the the <code>View/ViewController</code> is the body. The role of the brain is to tell the body how to behave and how it feels at the moment, while the body reacts to that state of the brain and also sends signals, as this being interacts with the environment, for the brain to process. Also, if the organism is too simple there's no need for a complex brain, a pretty dumb one is enough for the body to fill its role in the environment.</p><p>Translating this into developer words, the <code>View/ViewController</code> is the body and the <code>ViewModel</code> is the brain. If the component is too dumb, one without any complex/asynchronous behavior, the <code>ViewModel</code> <em>is</em> the state that feeds the view and can be modeled as a value type (<code>struct</code> or <code>enum</code>). Now, if the component contains behavior (which is the case for our Balance component) the <code>ViewModel</code> will encapsulate this behavior by (1) providing an <strong>observable</strong> state for the <code>View/ViewController</code> to render and (2) handling any events that the <code>View/ViewController</code> might send. The role of the view layer is just <strong>binding</strong> correctly to the ViewModel, so that its always sends the right events and renders the <code>ViewModel</code>'s current state.</p><p>So we'll start by defining a class that will own the state of our <code>BalanceViewController</code> and then we'll move all the behavior and state updates into this class.</p><pre><code>import Combine
+</code></pre><p>Now all we need to do is replacing that <code>\.isAnimating</code> key path with <code>\.writableIsAnimating</code> and run the tests again. Here is the <a href="https://github.com/cicerocamargo/CombineIntro/commit/d48d8645689abbd3907ae48e35dd99307f812a46">commit diff</a>.</p><p>You might be thinking that creating these fine-grained subscriptions for each subview that we need to update is overkill for our component. And you are completely right. I went ahead and replaced every view update that we had in <code>BalanceViewController</code> with calls to <code>assign</code> after applying a couple of operators, <a href="https://github.com/cicerocamargo/CombineIntro/commit/59194faa4142a91fdbd2072242ef145306dae8e9">check it out</a>.</p><p>Besides being unnecessarily precise (UIKit is optimized enough to know when some property update will really require a new render phase), this is much harder to read than our old <code>updateView(state:)</code> function, even after cleaning up all those <code>.store(in:)</code> calls.</p><p>I'm doing this for explanatory purposes, of course, but we usually work on more complex screens right? You'll probably spot better opportunities to use <code>assign</code> at a higher level as you start using Combine in your apps, specially with UIKit.</p><h2>Conclusion</h2><p>Although <code>sink</code> is the most common way to create subscriptions in Combine, we can use (but not abuse, as I did) <code>assign</code> and <code>subscribe</code> to connect publishers and subscribers in a very elegant and precise way.</p><p>Keep these mechanisms in mind and don't always chose <code>sink</code> without reflecting before if <code>assign</code> or <code>subscribe</code> could be applicable <strong>AND</strong> make your code better.</p><p>In the next (and probably the last) part, we'll apply Combine to our service and the network layer, so follow me on <a href="https://twitter.com/cicerocamargo">Twitter</a> and <a href="https://www.linkedin.com/in/cicerocamargo/">LinkedIn</a> to stay tuned.</p><p>If you have suggestions, corrections, etc., feel free to open a Pull Request or send me a message.</p><p>See you next time!</p>]]></content:encoded></item><item><guid isPermaLink="true">https://your-website-url.com/articles/combine-intro-2</guid><title>An Introduction to Combine - Part 2</title><description>Let's refactor our tiny app towards MVVM and learn about CurrentValueSubject and the @Published property wrapper.</description><link>https://your-website-url.com/articles/combine-intro-2</link><pubDate>Fri, 21 May 2021 07:47:00 -0300</pubDate><content:encoded><![CDATA[<h1>An Introduction to Combine - Part 2</h1><p>Welcome back to the second part of this introduction to Combine. In <a href="https://cicerocamargo.github.io/articles/combine-intro-1/">part 1</a> we learned how to see our applications as a mesh of objects that produce and consume events from each other, and from that point we gave our first step to refactor our mini MVC app using Combine.</p><p>In this second part I want to we're going to continue the refactor moving our component towards the MVVM (Model-View-ViewModel) pattern, and by doing that we're gonna learn how we can use Combine to <strong>observe updates in stored values</strong>.</p><h2>Refactoring to MVVM</h2><p>Before we start changing the code, let's talk about the role of the <code>ViewModel</code>. Comparing our component to a living organism, I see the <code>ViewModel</code> as the <strong>brain</strong>, where the the <code>View/ViewController</code> is the body. The role of the brain is to tell the body how to behave and how it feels at the moment, while the body reacts to that state of the brain and also sends signals, as this being interacts with the environment, for the brain to process. Also, if the organism is too simple there's no need for a complex brain, a pretty dumb one is enough for the body to fill its role in the environment.</p><p>Translating this into developer words, the <code>View/ViewController</code> is the body and the <code>ViewModel</code> is the brain. If the component is too dumb, one without any complex/asynchronous behavior, the <code>ViewModel</code> <em>is</em> the state that feeds the view and can be modeled as a value type (<code>struct</code> or <code>enum</code>). Now, if the component contains behavior (which is the case for our Balance component) the <code>ViewModel</code> will encapsulate this behavior by (1) providing an <strong>observable</strong> state for the <code>View/ViewController</code> to render and (2) handling any events that the <code>View/ViewController</code> might send. The role of the view layer is just <strong>binding</strong> correctly to the ViewModel, so that its always sends the right events and renders the <code>ViewModel</code>'s current state.</p><p>So we'll start by defining a class that will own the state of our <code>BalanceViewController</code> and then we'll move all the behavior and state updates into this class.</p><pre><code>import Combine
 import Foundation
 import UIKit
 
@@ -310,4 +273,157 @@ final class BalanceViewModel {
         rootView.redactedOverlay.isHidden = !state.isRedacted
     }
 }
-</code></pre><p>And our tests are back to green. <a href="https://github.com/cicerocamargo/CombineIntro/commit/cd9dbd1ea2660ad84d5a865c26259a3ab918e26e">Here</a>'s the full change.</p><h2>Conclusion</h2><p>Being able to observe changes in stored properties is a pre-requisite for applying the MVVM pattern and Combine helps a lot with this task, specially with the <code>@Published</code> property wrapper. But we have to be aware of its details, so don't be like me please <a href="https://developer.apple.com/documentation/combine/published">read the documentation</a>.</p><p>In part 3, we'll continue this refactor and learn new ways of creating subscriptions.</p><p>I'm also pushing this series of articles into the README of the repo, so you can start watching the repo and follow me on <a href="https://twitter.com/cicerocamargo">Twitter</a> or <a href="https://www.linkedin.com/in/cicerocamargo/">LinkedIn</a> to be notified about updates.</p><p>If you have suggestions, corrections, etc., feel free to open a Pull Request or send me a message.</p><p>See you soon.</p>]]></content:encoded></item></channel></rss>
+</code></pre><p>And our tests are back to green. <a href="https://github.com/cicerocamargo/CombineIntro/commit/cd9dbd1ea2660ad84d5a865c26259a3ab918e26e">Here</a>'s the full change.</p><h2>Conclusion</h2><p>Being able to observe changes in stored properties is a pre-requisite for applying the MVVM pattern and Combine helps a lot with this task, specially with the <code>@Published</code> property wrapper. But we have to be aware of its details, so don't be like me please <a href="https://developer.apple.com/documentation/combine/published">read the documentation</a>.</p><p>In part 3, we'll continue this refactor and learn new ways of creating subscriptions.</p><p>I'm also pushing this series of articles into the README of the repo, so you can start watching the repo and follow me on <a href="https://twitter.com/cicerocamargo">Twitter</a> or <a href="https://www.linkedin.com/in/cicerocamargo/">LinkedIn</a> to be notified about updates.</p><p>If you have suggestions, corrections, etc., feel free to open a Pull Request or send me a message.</p><p>See you soon.</p>]]></content:encoded></item><item><guid isPermaLink="true">https://your-website-url.com/articles/combine-intro-1</guid><title>An Introduction to Combine - Part 1</title><description>Let's learn how to see our apps as event publishers and subscribers, and also give our first steps with Apple's Combine framework.</description><link>https://your-website-url.com/articles/combine-intro-1</link><pubDate>Sat, 15 May 2021 10:47:00 -0300</pubDate><content:encoded><![CDATA[<h1>An Introduction to Combine - Part 1</h1><p>Have you ever tried to learn reactive programming and got even more confused than before after reading some definitions of it? Yeah, I know. I've been there too and I promise won’t throw any definition at you here. What I want to do instead is using concepts that you already know and then show how to convert them into Combine code.</p><p>So let’s cut the bullshit and get started!</p><h2>Our case study</h2><p>For us to have a realistic starting point imagine the following: you need to implement a component for a banking application that loads and presents the user's account balance. Here are some more detailed specifications:</p><ul><li>It must refresh each time it appears on-screen;</li><li>It must provide a way for the user to refresh the balance manually;</li><li>Currency should be formatted to USD;</li><li>Once we have a value to show, we should always show the date when that value was acquired;</li><li>It should redact the value when the app is not active;</li></ul><p>The result looks like this:</p><img src="https://github.com/cicerocamargo/CombineIntro/raw/main/recording.gif"/><p>I went ahead and implemented it in the simplest possible way that I could unit-test. Our starting point will be <a href="https://github.com/cicerocamargo/CombineIntro/tree/b624810c6a6820b2894e5549458bcf95446c1ab2">this commit</a>.</p><p>It's a UIKit MVC component and all the behavior as well as the view updates take place into the <code>BalanceViewController</code>. <code>BalanceView</code> contains just some ugly view code and it exposes a couple of subviews for the ViewController to tweak as needed. I know, this is not ideal from the encapsulation point of view, but it will serve as a temporary way to remove this ugliness from the controller, bear with me.</p><p>We also have the <code>BalanceService</code>, which abstracts away the request to get the current balance, and <code>BalanceViewState</code>, which groups all the properties that compose the state of the component as well as some extensions with presentation logic.</p><p>Take some time to study the code. Consider starting from <code>BalanceViewControllerTests</code>, where I tried to cover everything at once: how the controller interacts with the service in reaction to certain events and how it updates the view with formatted data. It's pretty impressive how much code we need to write to get this simple component done, isn't it?</p><p>OK. Ready? Let's move on.</p><h2>It all comes down to asynchronous events</h2><p>Object-Oriented software is about objects sending messages (or <em>events</em>) to each other and updating their state correctly upon the reception of the events that they implement or are interested in.</p><p>Let's analyze the following excerpt from <code>BalanceViewController</code>:</p><pre><code>(...)
+
+override func viewDidLoad() {
+    super.viewDidLoad()
+
+    rootView.refreshButton.addTarget(
+        self,
+        action: #selector(refreshBalance),
+        for: .touchUpInside
+    )
+
+    notificationCenterTokens.append(
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.willResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self]_ in
+            self?.state.isRedacted = true
+        }
+    )
+
+    notificationCenterTokens.append(
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self]_ in
+            self?.state.isRedacted = false
+        }
+    )
+}
+
+override func viewDidAppear(_ animated: Bool) {
+    super.viewDidAppear(animated)
+    refreshBalance()
+}
+
+@objc private func refreshBalance() {
+    state.didFail = false
+    state.isRefreshing = true
+    service.refreshBalance { [weak self] result in
+        self?.handleResult(result)
+    }
+}
+
+(...)
+</code></pre><p>First of all, any <code>UIViewController</code> subclass will automatically be <em>subscribed</em> to a ton of <em>events</em> from the framework whether it wants or not. These subclasses can append behavior to certain events just by overriding specific methods. In our case, when the <code>viewDidLoad</code> event occurs <code>BalanceViewController</code> subscribes itself to events from other <em>publishers</em>: <code>rootView.refreshButton</code> and <code>NotificationCenter.default</code>.</p><p>In case it wanted to <em>cancel</em> these <em>subscriptions</em>, all it had to do is:</p><pre><code>rootView.refreshButton.removeTarget(
+    self,
+    action: #selector(refreshBalance),
+    for: .touchUpInside
+)
+notificationCenterTokens.forEach { token in
+    NotificationCenter.default.removeObserver(token)
+}
+</code></pre><p><code>BalanceViewController</code> also reacts to the <code>viewDidAppear</code> event by updating its state in preparation to refresh the balance, and sends an event (by a direct method call) to the <code>service</code> to fire a new request, passing a closure that should be invoked in reaction to the response being received.</p><p>I highlighted terms like <em>event</em>, <em>publisher</em>, <em>subscribe</em> and <em>cancel subscription</em> on purpose, firstly because they are frequent terms in Combine's dialect, but I also wanted to show you that you already understand event-driven programming and use it everyday. We just saw 3 manifestations of these concepts that are extensively used in UIKit: framework class/method overrides, the target-action pattern and closures (a.k.a. callbacks or blocks).</p><p>The same applies to most of the <em>delegates</em> that you certainly have used, like when you have a <code>UITableView</code> and you set a custom class of yours as the <code>UITableViewDelegate</code>. Your class will then be <em>reactive</em> to events, like the selection of a row at a given index, that happen in that table view.</p><p><a href="https://developer.apple.com/documentation/swift/cocoa_design_patterns/using_key-value_observing_in_swift">KVO</a> is another good example: you connect some code as a reaction to value changes of a property in some object. By the way, KVO calls can be converted into combine code directly, check <a href="https://developer.apple.com/documentation/combine/performing-key-value-observing-with-combine">here</a> fore more details.</p><p>And the list goes on. But, as you see, nothing is really new. Combine and other reactive frameworks just propose another way to model this event publisher-subscriber relationship.</p><p>So why having yet another way to do the same stuff?</p><p>Because reactive frameworks takes event handling to another level. The way Combine (and other frameworks like RxSwift or ReactiveCocoa) implements these mechanisms unlocks a lot of other useful features, as we're gonna see later.</p><p>For now let's just start “combinifying” the examples above (sorry for the long intro).</p><h2>The publisher side</h2><p>We'll start with the <code>refreshButton</code> in <code>BalanceView</code>. I’ll adapt the target-action to a Combine publisher that propagates the <code>.touchUpInside</code> events by creating a subclass of UIButton, like this:</p><pre><code>class CustomButton: UIButton {
+    private lazy var touchUpInsideSubject: PassthroughSubject&lt;Void, Never&gt; = {
+        let subject = PassthroughSubject&lt;Void, Never&gt;()
+        addTarget(self, action: #selector(handleTap), for: .touchUpInside)
+        return subject
+    }()
+
+    @objc private func handleTap(sender: UIButton, event: UIEvent) {
+        touchUpInsideSubject.send()
+    }
+
+    var touchUpInsidePublisher: AnyPublisher&lt;Void, Never&gt; {
+        touchUpInsideSubject.eraseToAnyPublisher()
+    }
+}
+</code></pre><p>We could do this without subclassing, which would be better, but its a bit more complex and the code above is perfect to explain some new Combine types that appeared on the listing.</p><h3>AnyPublisher</h3><p>The part that is visible to the outside is <code>touchUpInsidePublisher</code>, whose type is <code>AnyPublisher&lt;Void, Never&gt;</code>. This var exposes the upstream publisher (<code>touchUpInsideSubject </code>) in a read-only way by wrapping it in a type-erased Publisher. I won’t explain <em>type-erasure</em> here, but <a href="https://www.bignerdranch.com/blog/breaking-down-type-erasure-in-swift/">here</a> is an excellent article on the topic. If you are not familiar with type erasure you can also read it later and just accept that it’s a necessary evil for the time being.</p><p>Looking at the generic types (those types inside the angle brackets), the first one means that this publisher sends <code>Void</code> events (we could send the <code>UIEvent</code> instead but it's rarely useful, so let's stick with <code>Void</code>). The second one is the failure type, so <code>Never</code> is a Foundation type that can't be instantiated, meaning that this publisher can't fail, what makes sense since the UIButton will never break and stop sending touches.</p><h3>PassthroughSubject</h3><p>The <code>touchUpInsideSubject</code> is the real meat here. <code>Subject</code>s are special types of publishers, that allow you to programatically send events. <code>PassthroughSubject</code>, as it name suggests, doesn’t store any event/value that you send. Events just "pass through" the subject and reach any subscribers that it might have <strong>at that moment</strong>. This is important: if you subscribe to this subject (or to any publisher built on top of it, like its type-erased version <code>touchUpInsidePublisher</code>) after a given event happened you’ll never receive it again. Save that information.</p><p>Less importantly, <code>touchUpInsideSubject</code> is intentionally structured as a lazy var, so that when it’s first needed, the button also adds itself as target to call <code>send</code> on the subject when a <code>UIControl.Event.touchUpInside</code> occurs.</p><h2>The subscriber side</h2><p>Now let's see how we can update <code>BalanceViewController</code> to use our new button subclass and subscribe to <code>touchUpInsidePublisher</code>.</p><pre><code>import Combine
+(...)
+
+class BalanceViewController: UIViewController {
+    private var buttonCancellable: AnyCancellable?
+    (...)
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+
+        buttonCancellable = rootView.refreshButton.touchUpInsidePublisher
+            .sink(
+                receiveValue: { [weak self] _ in
+                    self?.refreshBalance()
+                }
+            )
+            
+        (...)
+    }
+    
+    (...)
+    
+    private func refreshBalance() { (...) }
+}
+</code></pre><p>Setting up a tap handler is a lot simpler now and we also don't need <code>@objc</code> functions anymore. It can get even simpler if we use the trailing closure syntax in the <code>sink</code> call:</p><pre><code>buttonCancellable = rootView.refreshButton.touchUpInsidePublisher
+    .sink { [weak self] _ in
+        self?.refreshBalance()
+    }
+</code></pre><p>We run the tests and they still pass. Nice!</p><p>But while we improved the code slightly we also had to add the <code>buttonCancellable</code> var, so let me explain all these new stuff before we move on.</p><h3>Sink</h3><p>The simplest way of creating a subscription to a publisher is to call <code>sink</code> passing a <code>receiveValue</code> closure that will be called on each new event. The input parameter is that <code>Void</code> value that we sent from the subject inside <code>CustomButton</code>. It doesn't contain any information, so we can just ignore it.</p><p>If we were interested in knowing when this publisher stops sending events, either because it completed successfuly or because it failed (which can't happen because the failure type is <code>Never</code>), we would also have to pass a <code>receiveCompletion</code> closure. As this is not the case let's not bother with this now.</p><h3>AnyCancellable</h3><p>So, from now on everytime this publisher sends an event (i.e. the button is tapped) <code>receiveValue</code> closure will be called. Well, not so fast. A crucial part is to retain the return value of <code>sink</code>, which is an instance of <code>AnyCancellable</code> (hello again <em>type erasure</em>). The cancellable object is what will ultimately keep this subscription alive, until you explicitly call <code>cancel</code> on it or the object is deallocated. In our example only <code>BalanceViewController</code> has a strong reference to <code>buttonCancellable</code>, so both will die together and the subscription will be cancelled at a proper time.</p><p>Just be careful with retain cycles because everything that you reference strongly in the <code>sink</code> closures will be indirectly referenced by the cancellable too.</p><p>Here's the full <a href="https://github.com/cicerocamargo/CombineIntro/compare/b624810c6a6820b2894e5549458bcf95446c1ab2...20021065822fe5d4d996e78be42a6edd4d17ec63">diff</a> from our starting point.</p><h2>What about NotificationCenter?</h2><p><code>NotificationCenter</code> already provides extensions that allow for creating publishers for a given <code>Notification.Name</code>, so <code>BalanceViewController</code> can be updated like this:</p><pre><code>class BalanceViewController: UIViewController {
+    (...)
+    private var appWillResignActiveCancellable: AnyCancellable?
+    private var appDidBecomeActiveCancellable: AnyCancellable?
+
+    (...)
+
+    override func viewDidLoad() {
+        (...)
+
+        appWillResignActiveCancellable = NotificationCenter.default
+            .publisher(for: UIApplication.willResignActiveNotification)
+            .sink { [weak self] _ in
+                self?.state.isRedacted = true
+            }
+
+        appDidBecomeActiveCancellable = NotificationCenter.default
+            .publisher(for: UIApplication.didBecomeActiveNotification)
+            .sink { [weak self] _ in
+                self?.state.isRedacted = false
+            }
+    }
+    
+    (...)
+}
+</code></pre><p>Now the input parameter of the <code>receiveValue</code> closures will be the <code>Notification</code> objects, which I'm not interested in as well. But the point here is that the type of this input value is always bound to the generic type from the publisher.</p><p>Some things are not visible in the code above: I got rid of the <code>notificationCenterTokens</code> var and could also delete the custom <code>deinit</code> because the cancellables will already take care of the unsubscribe. On the other hand, I had to add 2 new <code>AnyCancellable</code> vars to retain the subscriptions. This is starting to smell...</p><p>As all the 3 cancellables have the same lifetime (they should live while their instance of <code>BalanceViewController</code> exists), we can put all of them into a signle <code>Set</code> and use a convenient <code>store(in:)</code> function to throw them in there immediately after their creation. Let's see how this looks:</p><pre><code>class BalanceViewController: UIViewController {
+    private var cancellables: Set&lt;AnyCancellable&gt; = []
+
+    (...)
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+
+        rootView.refreshButton.touchUpInsidePublisher
+            .sink { [weak self] _ in
+                self?.refreshBalance()
+            }
+            .store(in: &amp;cancellables)
+
+        NotificationCenter.default
+            .publisher(for: UIApplication.willResignActiveNotification)
+            .sink { [weak self] _ in
+                self?.state.isRedacted = true
+            }
+            .store(in: &amp;cancellables)
+
+        NotificationCenter.default
+            .publisher(for: UIApplication.didBecomeActiveNotification)
+            .sink { [weak self] _ in
+                self?.state.isRedacted = false
+            }
+            .store(in: &amp;cancellables)
+    }
+    
+    (...)
+}
+</code></pre><p>Neat, right? Tests still pass. Here is the <a href="https://github.com/cicerocamargo/CombineIntro/compare/20021065822fe5d4d996e78be42a6edd4d17ec63...b18a1aed2fb471aa1a55b7e9672faa63e543e922">whole change</a>. Moving on.</p><h2>Conclusion</h2><p>Wow! It was a lot for a single article! We learned about event-driven programming and reactive concepts like publishers, subscriptions, etc., and we also found out that we already knew a lot of these things, it's just a matter of adapting the way we write the code to connect the events.</p><p>In <a href="https://cicerocamargo.github.io/articles/combine-intro-2/">part 2</a>, we're gonna refactor our component towards the MVVM pattern, and in the process we will learn about new Combine types.</p><p>I'm also pushing this series of articles into the README of the repo, so you can start watching the repo and follow me on <a href="https://twitter.com/cicerocamargo">Twitter</a> or <a href="https://www.linkedin.com/in/cicerocamargo/">LinkedIn</a> to be notified about updates.</p><p>If you have suggestions, corrections, etc., feel free to open a Pull Request or send me a message.</p><p>See you soon.</p>]]></content:encoded></item></channel></rss>

@@ -1,0 +1,114 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><meta name="og:site_name" content="Cícero Camargo"/><link rel="canonical" href="https://your-website-url.com/articles/combine-intro-4"/><meta name="twitter:url" content="https://your-website-url.com/articles/combine-intro-4"/><meta name="og:url" content="https://your-website-url.com/articles/combine-intro-4"/><title>An Introduction to Combine - Part 4 | Cícero Camargo</title><meta name="twitter:title" content="An Introduction to Combine - Part 4 | Cícero Camargo"/><meta name="og:title" content="An Introduction to Combine - Part 4 | Cícero Camargo"/><meta name="description" content="Let's learn how to model our Networking/Services layer usign Combine."/><meta name="twitter:description" content="Let's learn how to model our Networking/Services layer usign Combine."/><meta name="og:description" content="Let's learn how to model our Networking/Services layer usign Combine."/><meta name="twitter:card" content="summary"/><link rel="stylesheet" href="/styles.css" type="text/css"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><link rel="shortcut icon" href="/images/favicon.png" type="image/png"/><link rel="alternate" href="/feed.rss" type="application/rss+xml" title="Subscribe to Cícero Camargo"/></head><body class="item-page"><header><div class="wrapper"><a class="site-name" href="/">Cícero Camargo</a><nav><ul><li><a href="/about">About</a></li><li><a class="selected" href="/articles">Articles</a></li></ul></nav></div></header><div class="wrapper"><article><div class="content"><h1>An Introduction to Combine - Part 4</h1><p>Welcome back to the 4th and last part of this introduction to Combine. In this article our goal is to apply Combine to our Networking/Service layer. If you lost the previous articles, here are <a href="https://cicerocamargo.github.io/articles/combine-intro-1/">part 1</a>, <a href="https://cicerocamargo.github.io/articles/combine-intro-2/">part 2</a> and <a href="https://cicerocamargo.github.io/articles/combine-intro-3/">part 3</a>.</p><p>Today, the first construct that I want to show you is <code>Future</code>.</p><h2>Future</h2><p><code>Future</code> is a special kind of <code>Publisher</code> that we can use to manually send a value asychronously, just like we did with <code>Subject</code>s, but we're only allowed to either send a single value and complete or fail (if you come from RxSwift, it's the same as <code>Single</code>). <code>Future</code> is perfect to adapt closure-based APIs to Combine, and I'll create an extension of our <code>BalanceService</code> protocol to show you exactly what I mean.</p><pre><code>extension BalanceService {
+    func refreshBalance() -&gt; AnyPublisher&lt;BalanceResponse, Error&gt; {
+        Future { promise in
+            self.refreshBalance { result in
+                do {
+                    let response = try result.get()
+                    promise(.success(response))
+                } catch {
+                    promise(.failure(error))
+                }
+            }
+        }
+        .eraseToAnyPublisher()
+    }
+}
+</code></pre><p>Our new version of <code>refreshBalance()</code> calls the old one inside a closure that <code>Future</code> receives on its constructor, where we can execute our asynchronous tasks. This closure also provides another closure as input, the <code>promise</code> parameter, and we should use that to call back when our asynchronous tasks are finished with a <code>Result</code> object indicating a success or a failure. In fact, the shape of the <code>promise</code> closure is exactly the same as the <code>completion</code> parameter in the original <code>refreshBalance</code> function, so we don't really need to unwrap the result, we can just forward <code>promise</code> like this:</p><pre><code>extension BalanceService {
+    func refreshBalance() -&gt; AnyPublisher&lt;BalanceResponse, Error&gt; {
+        Future { promise in
+            self.refreshBalance(completion: promise)
+        }
+        .eraseToAnyPublisher()
+    }
+}
+</code></pre><p>We could also return <code>Future&lt;BalanceResponse, Error&gt;</code> instead of an <code>AnyPublisher</code>, but that would leak some implementation details to the caller so I usually prefer erasing to <code>AnyPublisher</code>.</p><p>Now we need to adjust <code>BalanceViewModel</code> to call the new version of <code>refreshBalance()</code>, and we'll do it by calling <code>sink</code> on the "erased" <code>Future</code>:</p><pre><code>final class BalanceViewModel {
+    (...)
+
+    private func refreshBalance() {
+        state.didFail = false
+        state.isRefreshing = true
+        service.refreshBalance()
+            .sink(
+                receiveCompletion: { [weak self] completion in
+                    self?.state.isRefreshing = false
+                    if case .failure = completion {
+                        self?.state.didFail = true
+                    }
+                },
+                receiveValue: { [weak self] value in
+                    self?.state.lastResponse = value
+                }
+            )
+            .store(in: &amp;cancellables)
+    }
+}
+</code></pre><p>This time we can't ignore the <code>receiveCompletion</code> closure because the Publisher's failure type is <code>Error</code> (instead of <code>Never</code>), so it can really fail.</p><p>I won't lie: this <code>sink</code> with two closures is pretty ugly and makes me remember the APIs from the old ObjC days, and even some from early versions of Swift, before we had the <code>Result</code> type (which I first saw in <a href="https://github.com/Alamofire/Alamofire">Alamofire</a>, long before we had an official version in the Foundation framework). On the other hand, this makes it clear to the caller that these two callbacks may not be called together, example: if we <a href="https://developer.apple.com/documentation/combine/publisher/prepend(_:">prepend</a>-v9sb) a cached value synchronously then fire the request we'll have <code>receiveValue</code> called twice before <code>receiveCompletion</code>.</p><p>Let's run our tests to see if everything works. Tests pass. <a href="https://github.com/cicerocamargo/CombineIntro/commit/71ea1a3759352346ac82e55bf26539160baf91dc">Here</a> is the full commit.</p><p>One thing that's missing here is the following: if the original <code>refreshBalance(completion:)</code> function would return some kind of cancellable token, we should cancel the original request manually as the subscriptions to our <code>Future</code> are cancelled. The way for us to receive that information from <code>Future</code> is appending a <a href="https://developer.apple.com/documentation/combine/publisher/handleevents(receivesubscription:receiveoutput:receivecompletion:receivecancel:receiverequest:">handleEvents(receiveCancel: { ... })</a>) call before <code>eraseToAnyPublisher()</code>. However, the whole thing would be a bit more complicated than that and would go beyond the scope of this article, so I'll leave it as an exercise to the reader.</p><h2>URLSession extensions</h2><p>Now we're gonna throw our <code>BalanceService</code> extension away and use Combine directly in the definition of the protocol to see what happens. This is our new <code>BalanceService</code> protocol.</p><pre><code>protocol BalanceService {
+    func refreshBalance() -&gt; AnyPublisher&lt;BalanceResponse, Error&gt;
+}
+</code></pre><p>I'll also get rid of the <code>FakeBalanceService</code> and implement a live version, which makes a real request to fetch this JSON <a href="https://api.jsonbin.io/b/60b76b002d9ed65a6a7d6980">here</a> and parses the reponse data to a <code>BalanceResponse</code>. For that I'll use the Combine extensions that come with <code>URLSession</code>, but you can choose your preferred one. Good networking libraries like <a href="https://github.com/Alamofire/Alamofire">Alamofire</a> will provide built-in support for Combine.</p><p>We'll start by making <code>BalanceResponse</code> a <code>Decodable</code> type and updating <code>App Transport Security Settings</code> in my info plist to allow arbitrary loads. Then we implement the live service like this:</p><pre><code>struct LiveBalanceService: BalanceService {
+    private let decoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        let dateFormatter = DateFormatter()
+        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss Z"
+        decoder.dateDecodingStrategy = .formatted(dateFormatter)
+        return decoder
+    }()
+
+    private let url = URL(
+        string: "https://api.jsonbin.io/b/60b76b002d9ed65a6a7d6980"
+    )!
+
+    func refreshBalance() -&gt; AnyPublisher&lt;BalanceResponse, Error&gt; {
+        URLSession.shared
+            .dataTaskPublisher(for: url) // 1
+            .tryMap { output -&gt; Data in // 2
+                guard let httpResponse = output.response as? HTTPURLResponse,
+                      httpResponse.statusCode == 200 else {
+                    throw URLError(.badServerResponse)
+                }
+                return output.data
+            }
+            .decode(type: BalanceResponse.self, decoder: decoder) // 3
+            .receive(on: DispatchQueue.main) // 4
+            .eraseToAnyPublisher() // 5
+    }
+}
+</code></pre><p>Starting from the <code>refreshBalance()</code> function:</p><ol><li>We use the <code>dataTaskPublisher(for url: URL)</code> extension from <code>URLSession</code> to make a simple <code>GET</code> request; if we needed to do a custom request we would use <code>dataTaskPublisher(for request: URLRequest)</code> instead;</li><li>When the request returns we check its output (of type <code>URLSession.DataTaskPublisher.Output</code>) to validate the response status code, and if it's OK we propagate the <code>Data</code>;</li><li>We decode the response <code>Data</code> to a <code>BalanceResponse</code> using a custom <code>JSONDecoder</code> that knows how to convert <code>"2021-06-02 11:01:48 +0000"</code> into a <code>Date</code> object;</li><li>As <code>URLSession.shared</code> works on its own queue, we use <code>receive(on:)</code> to dispatch the <code>BalanceResponse</code> to the main queue before it reaches our ViewModel, which will generate the UI updates and must do that on the main queue;</li><li>Last, we erase the resulting publisher to <code>AnyPublisher</code>, otherwise we would have a huge return type (as we saw in the previous articles), and that would have to leak to the protocol;</li></ol><p>About step 4, we could have done the async dispatch inside our ViewModel too but then we would have asynchronous code in our tests. Furthermore threading is a <a href="https://en.wikipedia.org/wiki/Cross-cutting_concern">cross-cutting concern</a> and we can apply other design patterns to solve that in a way that our business logic doesn't have to know about threads. I'll make sure I come back to this in another article.</p><p>Now we need to replace all the places where we were using <code>FakeBalanceService</code> to use <code>LiveBalanceService</code>. This will include the <code>BalanceViewController</code> previews which is not ideal, but we'll return to this soon. After some tweaks we get the project compiling again and we can see our live service in action.</p><p>The test target, however, still need adjustments. I usually fix the tests before comitting the changes but this time I'll commit the current state as it is so that you can take a look at the <a href="https://github.com/cicerocamargo/CombineIntro/commit/bd9c234118957f41946490ef1d9ffa9d5d334db4">diff</a>.</p><h2>Synchronous Publishers</h2><p>It's time to fix our <code>BalanceServiceStub</code> so that it conforms to <code>BalanceService</code> again. Let's recap how it looks at the moment:</p><pre><code>class BalanceServiceStub: BalanceService {
+    private(set) var refreshCount = 0
+    var result: Result&lt;BalanceResponse, Error&gt;?
+
+    func refreshBalance(
+        completion: @escaping (Result&lt;BalanceResponse, Error&gt;) -&gt; Void
+    ) {
+        refreshCount += 1
+        if let result = result {
+            completion(result)
+        }
+    }
+}
+</code></pre><p>When we need to test scenarios where the service returns some response, we set that <code>result</code> variable to <code>.success(BalanceResponse(...))</code> so that when <code>refreshBalance</code> is called we call <code>completion</code> synchronously with the stubbed result. We can also set <code>result</code> to <code>.failure(...)</code> when we want to test failure scenarios, or set it to <code>nil/.none</code> when we want to check the system state when it's waiting for the response.</p><p>Well, now that we know how <code>Future</code> works we could be lazy and add that same function to <code>BalanceServiceStub</code> to fix everything:</p><pre><code>func refreshBalance() -&gt; AnyPublisher&lt;BalanceResponse, Error&gt; {
+    Future { promise in
+        self.refreshBalance(completion: promise)
+    }
+    .eraseToAnyPublisher()
+}
+</code></pre><p>As <code>completion</code> is always called synchronously this works, but I want to take another path and show you other useful <code>Publisher</code>s. This is how we're gonna implement <code>refreshBalance</code>:</p><pre><code>func refreshBalance() -&gt; AnyPublisher&lt;BalanceResponse, Error&gt; {
+    refreshCount += 1
+
+    switch result {
+    case .failure(let error):
+        return Fail(outputType: BalanceResponse.self, failure: error)
+            .eraseToAnyPublisher()
+
+    case .success(let response):
+        return Just(response)
+            .setFailureType(to: Error.self)
+            .eraseToAnyPublisher()
+
+    case .none:
+        return Empty(completeImmediately: false)
+            .eraseToAnyPublisher()
+    }
+}
+</code></pre><p>Let's analyze them from the perspective of the subscriber:</p><ol><li><code>Just</code> sends its value and completes successfully, everything happening synchronously when you <code>sink</code> to it; we also need to set an appropriate failure type here, because <code>Just</code> has a <code>Never</code> failure type by default;</li><li><code>Fail</code> will also complete immediately with a <code>failure</code> completion containing the <code>error</code> and won't send any value;</li><li><code>Empty</code> will never send any value too but will complete immediately with <code>.success</code> unless we create it with <code>completeImmediately: false</code>, in this case it'll never complete as well.</li></ol><p>With our <code>BalanceServiceStub</code> fixed we can run the tests again. They pass. <a href="https://github.com/cicerocamargo/CombineIntro/commit/334463a3f901eeeb0307e4acae825386cf9264cf">Commit</a> and push. We're done!</p><h2>Conclusion</h2><p>With this article we finished this practical introduction to Combine. I hope it helped you understand the fundamentals of the framework and how to think in a reactive way.</p><p>I'll certainly write more Combine it in the future to explore different ways to compose publishers, advanced operators, back pressure, etc., but I think what we saw in the series covers a lot of what we do in a daily basis.</p><p>If this helped you, it's your turn to help me by sharing these articles with your dev network. You can also send me a message on <a href="https://www.linkedin.com/in/cicerocamargo/">LinkedIn</a> or <a href="https://twitter.com/cicerocamargo">Twitter</a>, I'd love to hear your feedback.</p><p>Now let's see what WWDC 21 brings to us... I'm pretty sure async/await in Swift 5.5 will become the default way to model services and we probably won't use Combine in this context. To be continued.</p><p>See you next time!</p></div><span>Tagged with: </span><ul class="tag-list"><li><a href="/tags/combine">Combine</a></li><li><a href="/tags/reactive">Reactive</a></li><li><a href="/tags/swift">Swift</a></li><li><a href="/tags/ios">iOS</a></li><li><a href="/tags/networking">Networking.</a></li></ul></article></div><footer><p>Generated using <a href="https://github.com/johnsundell/publish">Publish</a></p></footer></body></html>
